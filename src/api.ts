@@ -1,5 +1,5 @@
 import type { ExtensionContext, AgentToolUpdateCallback } from "@earendil-works/pi-coding-agent";
-import type { Api, Model } from "@earendil-works/pi-ai";
+import type { Api, AssistantMessage, Context, FetchFunction, Model } from "@earendil-works/pi-ai";
 import { getEnvApiKey } from "@earendil-works/pi-ai/compat";
 import { TextEncoder, TextDecoder } from "util";
 
@@ -61,8 +61,14 @@ function getEnvAuth(model: Model<Api>): Extract<ResolvedAuth, { ok: true }> | un
  * Get API key and headers for a model.
  */
 async function getAuth(ctx: ExtensionContext, model: Model<Api>): Promise<ResolvedAuth> {
-    const resolved = await ctx.modelRegistry.getApiKeyAndHeaders(model);
-    if (!resolved.ok) return resolved;
+    const resolvedAuth = await ctx.modelRegistry.getApiKeyAndHeaders(model);
+    if (!resolvedAuth.ok) return resolvedAuth;
+    const resolved = {
+        ...resolvedAuth,
+        headers: resolvedAuth.headers
+            ? Object.fromEntries(Object.entries(resolvedAuth.headers).filter((entry): entry is [string, string] => typeof entry[1] === "string"))
+            : undefined,
+    };
 
     // pi-coding-agent 0.80.1+ returns { ok: true } from getApiKeyAndHeaders()
     // when auth only comes from provider env vars such as ANTHROPIC_API_KEY.
@@ -810,6 +816,81 @@ async function callOpenAIStream(
     };
 }
 
+type CapturedProviderResponse = {
+    response: Response;
+    completion: Promise<AssistantMessage>;
+};
+
+async function callAnthropicOAuthProvider(
+    ctx: ExtensionContext,
+    model: Model<Api>,
+    prompt: string,
+    apiKey: string,
+    headers: Record<string, string>,
+    maxTokens: number,
+    searchTool: Record<string, unknown>,
+    signal?: AbortSignal
+): Promise<CapturedProviderResponse> {
+    const provider = ctx.modelRegistry.getProvider(model.provider);
+    if (!provider) {
+        throw new Error(`No effective provider registered for Anthropic OAuth model: ${model.provider}`);
+    }
+
+    let resolveResponse!: (response: Response) => void;
+    let rejectResponse!: (error: unknown) => void;
+    const capturedResponse = new Promise<Response>((resolve, reject) => {
+        resolveResponse = resolve;
+        rejectResponse = reject;
+    });
+    let captured = false;
+    const captureFetch: FetchFunction = async (input, init) => {
+        try {
+            const response = await globalThis.fetch(input, init);
+            if (!captured) {
+                captured = true;
+                resolveResponse(response.clone());
+            }
+            return response;
+        } catch (error) {
+            if (!captured) {
+                captured = true;
+                rejectResponse(error);
+            }
+            throw error;
+        }
+    };
+
+    const context: Context = {
+        systemPrompt: "",
+        messages: [{ role: "user", content: prompt, timestamp: Date.now() }],
+        tools: [],
+    };
+    const stream = provider.streamSimple(model, context, {
+        apiKey,
+        headers,
+        maxTokens,
+        maxRetries: 0,
+        sessionId: ctx.sessionManager.getSessionId(),
+        signal,
+        fetch: captureFetch,
+        onPayload(payload) {
+            if (!payload || typeof payload !== "object" || Array.isArray(payload)) {
+                throw new Error("Anthropic provider produced an invalid request payload");
+            }
+            return { ...payload, tools: [searchTool] };
+        },
+    });
+    const completion = stream.result();
+    void completion.catch(() => {});
+    const response = await Promise.race([
+        capturedResponse,
+        completion.then((message) => {
+            throw new Error(message.errorMessage || "Anthropic provider completed without an HTTP response");
+        }),
+    ]);
+    return { response, completion };
+}
+
 async function callAnthropicStream(
     ctx: ExtensionContext,
     model: Model<Api>,
@@ -831,36 +912,46 @@ async function callAnthropicStream(
         ...(auth.headers || {}),
     };
 
-    if (auth.apiKey) {
-        if (isOAuth) {
-            if (!headers.Authorization && !headers.authorization) headers.Authorization = `Bearer ${auth.apiKey}`;
-            headers["anthropic-beta"] = headers["anthropic-beta"]
-                ? `${headers["anthropic-beta"]},claude-code-20250219,oauth-2025-04-20`
-                : "claude-code-20250219,oauth-2025-04-20";
-            headers["user-agent"] = headers["user-agent"] || "claude-cli/2.1.75";
-            headers["x-app"] = headers["x-app"] || "cli";
-        } else if (!headers["x-api-key"] && !headers["X-Api-Key"]) {
-            headers["x-api-key"] = auth.apiKey;
-        }
+    if (auth.apiKey && !isOAuth && !headers["x-api-key"] && !headers["X-Api-Key"]) {
+        headers["x-api-key"] = auth.apiKey;
     }
 
     const maxTokens = Math.min(Math.max(1024, Math.floor(model.maxTokens / 3) || 4096), 8192);
+    const searchTool = { type: "web_search_20250305", name: "web_search", max_uses: 10 };
     const requestBody = {
         model: model.id,
         max_tokens: maxTokens,
         messages: [{ role: "user", content: prompt }],
-        tools: [{ type: "web_search_20250305", name: "web_search", max_uses: 10 }],
+        tools: [searchTool],
         stream: true,
     };
 
-    const response = await fetch(resolveAnthropicMessagesUrl(model.baseUrl), {
-        method: "POST",
-        headers,
-        body: JSON.stringify(requestBody),
-        signal
-    });
+    let response: Response;
+    let providerCompletion: Promise<AssistantMessage> | undefined;
+    if (isOAuth && auth.apiKey) {
+        const providerRequest = await callAnthropicOAuthProvider(
+            ctx,
+            model,
+            prompt,
+            auth.apiKey,
+            headers,
+            maxTokens,
+            searchTool,
+            signal,
+        );
+        response = providerRequest.response;
+        providerCompletion = providerRequest.completion;
+    } else {
+        response = await fetch(resolveAnthropicMessagesUrl(model.baseUrl), {
+            method: "POST",
+            headers,
+            body: JSON.stringify(requestBody),
+            signal
+        });
+    }
 
     if (!response.ok) {
+        if (providerCompletion) await providerCompletion;
         throw new Error(`Anthropic API error (${response.status}): ${await response.text()}`);
     }
 
@@ -947,6 +1038,13 @@ async function callAnthropicStream(
             throw new Error(event.error?.message || JSON.stringify(event.error || event));
         }
     });
+
+    if (providerCompletion) {
+        const providerMessage = await providerCompletion;
+        if (providerMessage.stopReason === "error" || providerMessage.stopReason === "aborted") {
+            throw new Error(providerMessage.errorMessage || "Anthropic provider request failed");
+        }
+    }
 
     const cited = applyTextCitations(accumulatedText || "No answer available.", citations);
     const citationDetails = citations.map((citation) => ({

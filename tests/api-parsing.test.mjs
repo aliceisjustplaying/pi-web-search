@@ -520,6 +520,73 @@ test('Anthropic stream exposes server web search, result URLs, and citation deta
   }
 });
 
+test('Anthropic OAuth search uses the effective provider so wrappers can transform requests', async () => {
+  const previousFetch = globalThis.fetch;
+  let effectiveProviderCalled = false;
+  globalThis.fetch = async (_url, init) => {
+    const body = JSON.parse(init.body);
+    assert.equal(body.system[0].text, 'transformed-by-effective-provider');
+    assert.deepEqual(body.tools[0], { type: 'web_search_20250305', name: 'web_search', max_uses: 10 });
+    return makeResponse([
+      { data: { type: 'content_block_start', index: 0, content_block: { type: 'server_tool_use', id: 'srv_oauth', name: 'web_search', input: { query: 'Anthropic news' } } } },
+      { data: { type: 'content_block_start', index: 1, content_block: { type: 'web_search_tool_result', tool_use_id: 'srv_oauth', content: [{ type: 'web_search_result', title: 'Anthropic news', url: 'https://www.anthropic.com/news', encrypted_content: 'x' }] } } },
+      { data: { type: 'content_block_start', index: 2, content_block: { type: 'text', text: 'Anthropic news' } } },
+    ]);
+  };
+
+  const ctx = mockCtx('sk-ant-oat-test');
+  ctx.sessionManager = { getSessionId: () => 'session-test' };
+  ctx.modelRegistry.getProvider = () => ({
+    streamSimple(model, context, options) {
+      effectiveProviderCalled = true;
+      assert.equal(options.apiKey, 'sk-ant-oat-test');
+      assert.equal(options.sessionId, 'session-test');
+      assert.equal(context.messages[0].content, 'Search Anthropic news');
+
+      const result = (async () => {
+        const searchPayload = await options.onPayload({
+          model: model.id,
+          max_tokens: options.maxTokens,
+          messages: [{ role: 'user', content: 'Search Anthropic news' }],
+          stream: true,
+        }, model);
+        const transformedPayload = {
+          ...searchPayload,
+          system: [{ type: 'text', text: 'transformed-by-effective-provider' }],
+        };
+        const response = await options.fetch('https://example.test/v1/messages', {
+          method: 'POST',
+          headers: { authorization: 'Bearer sk-ant-oat-test' },
+          body: JSON.stringify(transformedPayload),
+          signal: options.signal,
+        });
+        await response.text();
+        return { role: 'assistant', content: [], stopReason: 'stop' };
+      })();
+
+      return { result: () => result };
+    },
+  });
+
+  try {
+    const result = await callApiStream(ctx, {
+      id: 'claude-test',
+      provider: 'anthropic',
+      api: 'anthropic-messages',
+      baseUrl: 'https://example.test',
+      maxTokens: 4096,
+      headers: {},
+    }, { contents: [{ parts: [{ text: 'Search Anthropic news' }] }] });
+
+    assert.equal(effectiveProviderCalled, true);
+    assert.equal(result.nativeSearchUsed, true);
+    assert.deepEqual(result.searchQueries, ['Anthropic news']);
+    assert.equal(result.sources[0].url, 'https://www.anthropic.com/news');
+  } finally {
+    globalThis.fetch = previousFetch;
+  }
+});
+
 test('Anthropic stream falls back to env API key when resolved auth has no credential', async () => {
   const previousFetch = globalThis.fetch;
   const previousAnthropicApiKey = process.env.ANTHROPIC_API_KEY;
