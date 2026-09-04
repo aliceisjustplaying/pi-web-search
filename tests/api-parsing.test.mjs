@@ -22,13 +22,13 @@ function sse(events) {
   }).join('');
 }
 
-function mockCtx(apiKey, model = undefined, headers = undefined) {
+function mockCtx(apiKey, model = undefined, headers = undefined, baseUrl = undefined) {
   const resolvedApiKey = arguments.length === 0 ? 'test-key' : apiKey;
   return {
     model,
     modelRegistry: {
       async getApiKeyAndHeaders() {
-        return { ok: true, apiKey: resolvedApiKey, headers };
+        return { ok: true, apiKey: resolvedApiKey, headers, baseUrl };
       },
       getAvailable() {
         return model ? [model] : [];
@@ -43,6 +43,157 @@ function makeResponse(events) {
     headers: { 'content-type': 'text/event-stream' },
   });
 }
+
+function makeCopilotResponsesModel() {
+  return {
+    id: 'gpt-5.6-sol',
+    provider: 'github-copilot',
+    api: 'openai-responses',
+    baseUrl: 'https://api.individual.githubcopilot.com',
+    reasoning: true,
+    headers: {},
+  };
+}
+
+function makeMinimalOpenAIResponse() {
+  return makeResponse([
+    { data: { type: 'response.done', response: { output: [] } } },
+  ]);
+}
+
+test('GitHub Copilot Responses uses the credential-specific base URL exposed by pi', async () => {
+  const previousFetch = globalThis.fetch;
+  globalThis.fetch = async (url, init) => {
+    assert.equal(url, 'https://api.business.githubcopilot.com/responses');
+    assert.equal(init.headers.authorization, 'Bearer copilot-token');
+    assert.equal(JSON.parse(init.body).model, 'gpt-5.6-sol');
+    return makeMinimalOpenAIResponse();
+  };
+
+  try {
+    await callApiStream(
+      mockCtx('copilot-token', undefined, undefined, 'https://api.business.githubcopilot.com'),
+      makeCopilotResponsesModel(),
+      { contents: [{ parts: [{ text: 'Search with Copilot' }] }] },
+    );
+  } finally {
+    globalThis.fetch = previousFetch;
+  }
+});
+
+test('GitHub Copilot Responses derives Business and Individual endpoints from older pi tokens', async () => {
+  const previousFetch = globalThis.fetch;
+  const expectedUrls = [
+    'https://api.business.githubcopilot.com/responses',
+    'https://api.individual.githubcopilot.com/responses',
+  ];
+  let requestIndex = 0;
+  globalThis.fetch = async (url) => {
+    assert.equal(url, expectedUrls[requestIndex++]);
+    return makeMinimalOpenAIResponse();
+  };
+
+  try {
+    for (const proxyEndpoint of [
+      'proxy.business.githubcopilot.com',
+      'proxy.individual.githubcopilot.com',
+    ]) {
+      await callApiStream(
+        mockCtx(`tid=test;proxy-ep=${proxyEndpoint};exp=9999999999`),
+        makeCopilotResponsesModel(),
+        { contents: [{ parts: [{ text: 'Search with Copilot' }] }] },
+      );
+    }
+    assert.equal(requestIndex, expectedUrls.length);
+  } finally {
+    globalThis.fetch = previousFetch;
+  }
+});
+
+test('GitHub Copilot Responses rejects unsafe proxy endpoints and falls back to the model URL', async () => {
+  const previousFetch = globalThis.fetch;
+  const unsafeTokens = [
+    'tid=test;exp=9999999999',
+    'tid=test;proxy-ep=evil.example.com;exp=9999999999',
+    'tid=test;proxy-ep=proxy.business.githubcopilot.com.evil.example;exp=9999999999',
+    'tid=test;proxy-ep=proxy.business.githubcopilot.com/path;exp=9999999999',
+    'tid=test;proxy-ep=proxy.business.githubcopilot.com:443;exp=9999999999',
+    'tid=test;proxy-ep=https://proxy.business.githubcopilot.com;exp=9999999999',
+    'tid=test;proxy-ep=proxy.business.githubcopilot.com;proxy-ep=proxy.individual.githubcopilot.com;exp=9999999999',
+  ];
+  let requestCount = 0;
+  globalThis.fetch = async (url) => {
+    requestCount++;
+    assert.equal(url, 'https://api.individual.githubcopilot.com/responses');
+    return makeMinimalOpenAIResponse();
+  };
+
+  try {
+    for (const token of unsafeTokens) {
+      await callApiStream(
+        mockCtx(token),
+        makeCopilotResponsesModel(),
+        { contents: [{ parts: [{ text: 'Search with Copilot' }] }] },
+      );
+    }
+    assert.equal(requestCount, unsafeTokens.length);
+  } finally {
+    globalThis.fetch = previousFetch;
+  }
+});
+
+test('non-Copilot Responses ignores proxy endpoint text in its API key', async () => {
+  const previousFetch = globalThis.fetch;
+  globalThis.fetch = async (url) => {
+    assert.equal(url, 'https://example.test/v1/responses');
+    return makeMinimalOpenAIResponse();
+  };
+
+  try {
+    await callApiStream(mockCtx(
+      'tid=test;proxy-ep=proxy.business.githubcopilot.com;exp=9999999999',
+      undefined,
+      undefined,
+      'https://api.business.githubcopilot.com',
+    ), {
+      id: 'gpt-test',
+      provider: 'openai',
+      api: 'openai-responses',
+      baseUrl: 'https://example.test/v1',
+      reasoning: false,
+      headers: {},
+    }, { contents: [{ parts: [{ text: 'Search with OpenAI' }] }] });
+  } finally {
+    globalThis.fetch = previousFetch;
+  }
+});
+
+test('Azure OpenAI Responses appends /responses to the configured Azure v1 base URL', async () => {
+  const previousFetch = globalThis.fetch;
+  globalThis.fetch = async (url, init) => {
+    assert.equal(url, 'https://example-resource.cognitiveservices.azure.com/openai/v1/responses');
+    assert.equal(init.headers.authorization, 'Bearer entra-token');
+    const body = JSON.parse(init.body);
+    assert.equal(body.model, 'gpt-5.6-terra');
+    assert.deepEqual(body.tools, [{ type: 'web_search' }]);
+    return makeMinimalOpenAIResponse();
+  };
+
+  try {
+    const result = await callApiStream(mockCtx('entra-token'), {
+      id: 'gpt-5.6-terra',
+      provider: 'azure-openai',
+      api: 'azure-openai-responses',
+      baseUrl: 'https://example-resource.cognitiveservices.azure.com/openai/v1/',
+      reasoning: false,
+      headers: {},
+    }, { contents: [{ parts: [{ text: 'Search with Azure OpenAI' }] }] });
+
+    assert.equal(result.providerKind, 'openai');
+  } finally {
+    globalThis.fetch = previousFetch;
+  }
+});
 
 test('OpenAI stream exposes native search calls, queries, URLs, and citations', async () => {
   const previousFetch = globalThis.fetch;
@@ -751,6 +902,26 @@ test('getModel does not fall back to another configured supported model', async 
   assert.match(result.content[0].text, /gpt-test/);
   assert.equal(result.details.error, 'unsupported_model');
   assert.deepEqual(result.details.availableSupportedModels, ['gpt-test (proxy-provider/openai-responses)']);
+});
+
+test('getModel accepts Azure OpenAI Responses models', async () => {
+  const model = {
+    id: 'gpt-5.6-terra',
+    provider: 'azure-openai',
+    api: 'azure-openai-responses',
+    baseUrl: 'https://example-resource.cognitiveservices.azure.com/openai/v1',
+    headers: {},
+  };
+  const ctx = {
+    model,
+    modelRegistry: {
+      getAvailable() {
+        return [model];
+      },
+    },
+  };
+
+  assert.equal(await getModel(ctx), model);
 });
 
 test('getModel accepts openai-codex Responses models', async () => {
