@@ -1,7 +1,7 @@
 {
   "name": "pi-web-search",
-  "version": "1.4.0",
-  "description": "Provider-native web search for pi: Gemini + URL Context, OpenAI Responses (Azure/Codex/Copilot), and Anthropic",
+  "version": "1.6.0",
+  "description": "Provider-native web search for pi: Gemini + URL Context, xAI Grok, OpenAI Responses (Azure/Codex/Copilot), Anthropic, and OpenCode Zen/Go",
   "type": "module",
   "main": "src/index.ts",
   "keywords": [
@@ -11,8 +11,12 @@
     "web-search",
     "gemini",
     "google",
+    "xai",
+    "grok",
     "openai",
     "anthropic",
+    "opencode",
+    "opencode-zen",
     "url-context",
     "url-analysis",
     "youtube"

@@ -1,4 +1,4 @@
-import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
+import type { AgentToolResult, ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import type { Api, Model } from "@earendil-works/pi-ai";
 import { Text } from "@earendil-works/pi-tui";
 import { getProviderKind } from "./api.ts";
@@ -9,7 +9,11 @@ const WEB_SEARCH_TOOL = "web_search";
 const URL_CONTEXT_TOOL = "url_context";
 
 function supportsUrlContext(model: Model<Api> | undefined) {
-    return !!model && getProviderKind(model) === "google";
+    if (!model) return false;
+    const kind = getProviderKind(model);
+    // Ollama serves URL retrieval through its web_fetch endpoint instead of
+    // Gemini URL Context; the tool dispatch handles both.
+    return kind === "google" || kind === "ollama";
 }
 
 function setEquals<T>(a: Set<T>, b: Set<T>) {
@@ -63,9 +67,10 @@ export default function (pi: ExtensionAPI) {
     pi.registerTool({
         name: WEB_SEARCH_TOOL,
         label: "Web Search",
-        description: "Search the web using the current supported provider (Google Gemini, OpenAI, or Anthropic). Optionally include URLs to analyze alongside search results.",
+        description: "Search the web using the current supported provider (Google Gemini, xAI Grok, OpenAI, Anthropic, Ollama, or OpenCode Zen/Go). Optionally include URLs to analyze alongside search results.",
         parameters: WebSearchSchema,
-        execute: webSearch,
+        execute: (id, params, signal = new AbortController().signal, onUpdate, ctx): Promise<AgentToolResult<any>> =>
+            webSearch(id, params, signal, onUpdate, ctx, pi.getThinkingLevel()),
         renderCall(args, theme) {
             const query = args.query || "…";
             const urlCount = args.urls?.length ?? 0;
@@ -92,7 +97,7 @@ export default function (pi: ExtensionAPI) {
     pi.registerTool({
         name: URL_CONTEXT_TOOL,
         label: "URL Context",
-        description: "Analyze the content of up to 20 public URLs using Gemini URL Context. Supports web pages, documents, images, and YouTube videos.",
+        description: "Analyze the content of up to 20 public URLs using provider-native URL retrieval (Gemini URL Context or Ollama web fetch). Supports web pages and documents; images and YouTube videos need Gemini.",
         parameters: UrlContextSchema,
         execute: urlContext
     });

@@ -1,7 +1,9 @@
 import type { ExtensionContext, AgentToolUpdateCallback } from "@earendil-works/pi-coding-agent";
+import type { ModelThinkingLevel } from "@earendil-works/pi-ai";
 import { Type, type Static } from "typebox";
-import { callApiStream, getConfig, applyCitations } from "./api.ts";
-import { getWebSearchModel, missingWebSearchConfigResult, errorResult, formatResult } from "./utils.ts";
+import { callApiStream, getConfig } from "./api.ts";
+import { formatWebSearchResult } from "./format.ts";
+import { getWebSearchModel, missingWebSearchConfigResult, errorResult } from "./utils.ts";
 
 export const WebSearchSchema = Type.Object({
     query: Type.String({ description: "The search query or question to answer" }),
@@ -15,9 +17,10 @@ export type WebSearchInput = Static<typeof WebSearchSchema>;
 export async function webSearch(
     id: string, 
     params: WebSearchInput, 
-    signal: AbortSignal, 
+    signal: AbortSignal,
     onUpdate: AgentToolUpdateCallback | undefined, 
-    ctx: ExtensionContext
+    ctx: ExtensionContext,
+    thinkingLevel?: ModelThinkingLevel
 ) {
     const model = await getWebSearchModel(ctx);
     if (!model) return missingWebSearchConfigResult(ctx);
@@ -37,9 +40,11 @@ export async function webSearch(
 
     try {
         const config = getConfig(model);
-        
-        // Build prompt: include URLs if provided
-        const prompt = hasUrls
+
+        // Build prompt: include URLs if provided. Ollama receives the URL list as
+        // a separate argument (its search is a REST endpoint, not a model tool),
+        // so the prompt stays a clean query.
+        const prompt = hasUrls && config.kind !== "ollama"
             ? `${params.query}\n\nAlso analyze these URLs:\n${params.urls!.join("\n")}`
             : params.query;
 
@@ -54,69 +59,9 @@ export async function webSearch(
         const result = await callApiStream(ctx, model, {
             contents: [{ role: "user", parts: [{ text: prompt }] }],
             ...(tools ? { tools } : {})
-        }, onUpdate, signal);
+        }, onUpdate, signal, thinkingLevel, params.urls);
 
-        const cited = applyCitations(result.text, result.groundingMetadata);
-        const text = cited.text;
-        const sources = result.sources?.length ? result.sources : cited.sources;
-        const extraSearchResults = (result.searchResults || []).filter((item) => item.url && !sources.some((source) => source.url === item.url));
-
-        // Handle URL context metadata
-        const urlMeta = result.urlContextMetadata?.urlMetadata 
-            || result.urlContextMetadata?.url_metadata || [];
-
-        const retrieved = urlMeta
-            .filter((m: any) => (m.urlRetrievalStatus || m.url_retrieval_status) === "URL_RETRIEVAL_STATUS_SUCCESS")
-            .map((m: any) => m.retrievedUrl || m.retrieved_url || m.url);
-
-        const failed = urlMeta
-            .filter((m: any) => (m.urlRetrievalStatus || m.url_retrieval_status) !== "URL_RETRIEVAL_STATUS_SUCCESS")
-            .map((m: any) => ({ 
-                url: m.retrievedUrl || m.retrieved_url || m.url, 
-                status: m.urlRetrievalStatus || m.url_retrieval_status 
-            }));
-
-        let summary = text;
-        
-        // Add URL status if there were failures
-        if (failed.length > 0) {
-            summary += `\n\n## URL Status\n✅ Retrieved: ${retrieved.length}\n❌ Failed: ${failed.length}`;
-            failed.forEach((f: any) => { summary += `\n- ${f.url}: ${f.status}`; });
-        }
-
-        // Add sources
-        if (sources.length > 0) {
-            summary += `\n\n## Sources\n${sources.map((s, i) => `${i + 1}. [${s.title}](${s.url})`).join("\n")}`;
-        }
-
-        if (extraSearchResults.length) {
-            const visibleResults = extraSearchResults.slice(0, 8);
-            summary += `\n\n## Additional Search Results\n${visibleResults.map((r, i) => {
-                const label = r.title || r.url || `Result ${i + 1}`;
-                const url = r.url ? ` - ${r.url}` : "";
-                const meta = [r.source, r.type, r.status, r.query ? `query=${r.query}` : undefined].filter(Boolean).join(", ");
-                return `${i + 1}. ${label}${url}${meta ? ` (${meta})` : ""}`;
-            }).join("\n")}`;
-            if (extraSearchResults.length > visibleResults.length) {
-                summary += `\n... and ${extraSearchResults.length - visibleResults.length} more results in tool details.`;
-            }
-        }
-
-        return formatResult(summary, {
-            sources,
-            providerKind: result.providerKind,
-            nativeSearchUsed: result.nativeSearchUsed,
-            nativeSearchEvents: result.nativeSearchEvents,
-            nativeSearchCalls: result.nativeSearchCalls,
-            searchQueries: result.searchQueries || result.groundingMetadata?.webSearchQueries,
-            searchResults: result.searchResults,
-            citations: result.citations,
-            retrieved: retrieved.length > 0 ? retrieved : undefined,
-            failed: failed.length > 0 ? failed : undefined,
-            model: model.id,
-            grounded: sources.length > 0 || (result.searchResults?.length || 0) > 0,
-            resultCount: result.searchResults?.length || sources.length
-        });
+        return formatWebSearchResult(result, { modelId: model.id });
     } catch (e: any) {
         return errorResult(e);
     }

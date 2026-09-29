@@ -1,7 +1,9 @@
 import type { ExtensionContext, AgentToolUpdateCallback } from "@earendil-works/pi-coding-agent";
 import { Type, type Static } from "typebox";
-import { callApiStream, getConfig, applyCitations } from "./api.ts";
-import { getModel, missingConfigResult, errorResult, formatResult } from "./utils.ts";
+import { callApiStream, getConfig } from "./api.ts";
+import { callOllamaUrlContext } from "./providers/ollama.ts";
+import { formatResult, formatUrlContextResult } from "./format.ts";
+import { getModel, missingConfigResult, errorResult } from "./utils.ts";
 
 export const UrlContextSchema = Type.Object({
     query: Type.String({ description: "Question or task to perform on the URLs" }),
@@ -30,6 +32,10 @@ export async function urlContext(
 
     try {
         const config = getConfig(model);
+        if (config.kind === "ollama") {
+            const result = await callOllamaUrlContext(ctx, model, params.query, params.urls, signal);
+            return formatUrlContextResult(result, { modelId: model.id });
+        }
         if (config.kind !== "google") {
             return formatResult(
                 `url_context currently requires a Google Gemini-compatible model. Current model: ${model.id} (${model.provider}/${model.api}).\n\nUse web_search for cross-provider web search, or switch to Gemini for provider-native URL context retrieval.`,
@@ -98,66 +104,7 @@ export async function urlContext(
             ...(tools ? { tools } : {})
         }, onUpdate, signal);
 
-        const cited = applyCitations(result.text, result.groundingMetadata);
-        const text = cited.text;
-        const sources = result.sources?.length ? result.sources : cited.sources;
-        const extraSearchResults = (result.searchResults || []).filter((item) => item.url && !sources.some((source) => source.url === item.url));
-        
-        // Handle both camelCase and snake_case metadata
-        const urlMeta = result.urlContextMetadata?.urlMetadata 
-            || result.urlContextMetadata?.url_metadata || [];
-
-        const retrieved = urlMeta
-            .filter((m: any) => (m.urlRetrievalStatus || m.url_retrieval_status) === "URL_RETRIEVAL_STATUS_SUCCESS")
-            .map((m: any) => m.retrievedUrl || m.retrieved_url || m.url);
-
-        const failed = urlMeta
-            .filter((m: any) => (m.urlRetrievalStatus || m.url_retrieval_status) !== "URL_RETRIEVAL_STATUS_SUCCESS")
-            .map((m: any) => ({ 
-                url: m.retrievedUrl || m.retrieved_url || m.url, 
-                status: m.urlRetrievalStatus || m.url_retrieval_status 
-            }));
-
-        let summary = text;
-        if (failed.length > 0) {
-            summary += `\n\n## URL Status\n✅ Retrieved: ${retrieved.length}\n❌ Failed: ${failed.length}`;
-            failed.forEach((f: any) => { summary += `\n- ${f.url}: ${f.status}`; });
-        }
-        const hasUrlContextMetadata = urlMeta.length > 0 || retrieved.length > 0 || sources.length > 0 || extraSearchResults.length > 0;
-        if (!hasUrlContextMetadata) {
-            summary += `\n\n## URL Context Verification\n⚠️ No verified URL context metadata was returned by provider ${result.providerKind || "unknown"}. Treat the answer as ungrounded unless sources, retrieved URLs, or searchResults are present in tool details.`;
-        }
-        if (sources.length > 0 && !summary.includes("## Sources")) {
-            summary += `\n\n## Sources\n${sources.map((s, i) => `${i + 1}. [${s.title}](${s.url})`).join("\n")}`;
-        }
-        if (extraSearchResults.length) {
-            const visibleResults = extraSearchResults.slice(0, 8);
-            summary += `\n\n## Additional Search Results\n${visibleResults.map((r, i) => {
-                const label = r.title || r.url || `Result ${i + 1}`;
-                const url = r.url ? ` - ${r.url}` : "";
-                const meta = [r.source, r.type, r.status, r.query ? `query=${r.query}` : undefined].filter(Boolean).join(", ");
-                return `${i + 1}. ${label}${url}${meta ? ` (${meta})` : ""}`;
-            }).join("\n")}`;
-            if (extraSearchResults.length > visibleResults.length) {
-                summary += `\n... and ${extraSearchResults.length - visibleResults.length} more results in tool details.`;
-            }
-        }
-
-        return formatResult(summary, {
-            sources,
-            providerKind: result.providerKind,
-            nativeSearchUsed: result.nativeSearchUsed,
-            nativeSearchEvents: result.nativeSearchEvents,
-            nativeSearchCalls: result.nativeSearchCalls,
-            searchQueries: result.searchQueries,
-            searchResults: result.searchResults,
-            citations: result.citations,
-            retrieved,
-            failed: failed.length > 0 ? failed : undefined,
-            model: model.id,
-            grounded: sources.length > 0 || (result.searchResults?.length || 0) > 0,
-            resultCount: result.searchResults?.length || sources.length
-        });
+        return formatUrlContextResult(result, { modelId: model.id });
     } catch (e: any) {
         return errorResult(e);
     }
