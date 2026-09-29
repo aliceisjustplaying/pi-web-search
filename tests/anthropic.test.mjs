@@ -169,6 +169,9 @@ test('Anthropic OAuth search uses the effective provider so wrappers can transfo
       effectiveProviderCalled = true;
       assert.equal(options.apiKey, 'sk-ant-oat-test');
       assert.equal(options.sessionId, 'session-test');
+      // pi-ai treats an explicit anthropic-beta header as the complete beta list,
+      // which would drop betas the provider needs (e.g. mid-conversation effort).
+      assert.ok(!Object.keys(options.headers).some((name) => name.toLowerCase() === 'anthropic-beta'));
       assert.equal(context.messages[0].content, 'Search Anthropic news');
       const result = (async () => {
         const searchPayload = await options.onPayload({

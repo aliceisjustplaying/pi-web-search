@@ -73,9 +73,16 @@ async function callAnthropicOAuthProvider(
         messages: [{ role: "user", content: prompt, timestamp: Date.now() }],
         tools: [],
     };
+    // pi-ai treats an explicit anthropic-beta header as the complete beta list,
+    // which would drop betas it needs for its own request shape (for example
+    // mid-conversation-output-config for managed-effort models). Let the
+    // provider compute betas itself; it already adds the OAuth ones.
+    const providerHeaders = Object.fromEntries(
+        Object.entries(headers).filter(([name]) => name.toLowerCase() !== "anthropic-beta")
+    );
     const stream = provider.streamSimple(model, context, {
         apiKey,
-        headers,
+        headers: providerHeaders,
         maxTokens,
         maxRetries: 0,
         sessionId: ctx.sessionManager?.getSessionId?.(),
