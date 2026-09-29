@@ -70,3 +70,30 @@ test("web_search keeps errors visible when collapsed", () => {
 
     assert.deepEqual(component.render(80).map((line) => line.trimEnd()), ["Error: unavailable"]);
 });
+
+test("web_search says so when the model answered without searching", () => {
+    const tool = getWebSearchTool();
+    const result = { content: [{ type: "text", text: "from memory" }], details: { nativeSearchUsed: false } };
+
+    const collapsed = tool.renderResult(result, { expanded: false, isPartial: false }, theme);
+    assert.match(collapsed.render(80).join("\n"), /No web search performed/);
+
+    const expanded = tool.renderResult(result, { expanded: true, isPartial: false }, theme);
+    const lines = expanded.render(80).join("\n");
+    assert.match(lines, /No web search performed/);
+    assert.match(lines, /from memory/);
+});
+
+test("web_search shows query and source counts when collapsed after a real search", () => {
+    const tool = getWebSearchTool();
+    const component = tool.renderResult(
+        {
+            content: [{ type: "text", text: "search result" }],
+            details: { nativeSearchUsed: true, searchQueries: ["a"], sources: [{}, {}] },
+        },
+        { expanded: false, isPartial: false },
+        theme,
+    );
+
+    assert.deepEqual(component.render(80).map((line) => line.trimEnd()), ["1 query · 2 sources"]);
+});

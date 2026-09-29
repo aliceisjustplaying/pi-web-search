@@ -87,10 +87,24 @@ export default function (pi: ExtensionAPI) {
                 .map((part) => part.text)
                 .join("\n");
 
-            const isError = Boolean(result.details?.error);
-            if (!expanded && !isError) return new Text("", 0, 0);
+            const details = result.details;
+            const isError = Boolean(details?.error);
+            if (isError) return new Text(theme.fg("error", output), 0, 0);
 
-            return new Text(theme.fg(isError ? "error" : "toolOutput", output), 0, 0);
+            // The model may answer without calling the native search tool; say so,
+            // otherwise a collapsed result looks identical to a real search.
+            let status = "";
+            if (details?.nativeSearchUsed === false) {
+                status = theme.fg("warning", "⚠ No web search performed — answered from model knowledge");
+            } else if (details?.nativeSearchUsed === true) {
+                const queries = details.searchQueries?.length ?? 0;
+                const sources = details.sources?.length ?? 0;
+                status = theme.fg("muted", `${queries} quer${queries === 1 ? "y" : "ies"} · ${sources} source${sources === 1 ? "" : "s"}`);
+            }
+
+            if (!expanded) return new Text(status, 0, 0);
+            const body = theme.fg("toolOutput", output);
+            return new Text(status ? `${status}\n\n${body}` : body, 0, 0);
         }
     });
 
