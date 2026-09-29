@@ -56,10 +56,14 @@ test('url_context warns when Gemini returns no verified URL context metadata', a
   assert.deepEqual(result.details.sources, []);
 });
 
-test('web_search does not add visible verification warning when native metadata is absent', async (t) => {
-  t.mock.method(globalThis, 'fetch', async () => makeResponse([
+test('web_search asks Claude to search and notes when it answered without searching', async (t) => {
+  let sentPrompt;
+  t.mock.method(globalThis, 'fetch', async (_url, init) => {
+    sentPrompt = JSON.parse(init.body).messages[0].content;
+    return makeResponse([
     { data: { type: 'content_block_start', index: 0, content_block: { type: 'text', text: 'Ungrounded answer without metadata.' } } },
-  ]));
+  ]);
+  });
 
   const model = {
     id: 'claude-test',
@@ -78,8 +82,9 @@ test('web_search does not add visible verification warning when native metadata 
     mockCtx('test-key', model),
   );
 
-  assert.doesNotMatch(result.content[0].text, /Search Verification/i);
-  assert.doesNotMatch(result.content[0].text, /No verified native search metadata/i);
+  assert.match(sentPrompt, /Use the web_search tool/);
+  assert.match(sentPrompt, /Search something/);
+  assert.match(result.content[0].text, /no web search was performed/i);
   assert.equal(result.details.providerKind, 'anthropic');
   assert.equal(result.details.nativeSearchUsed, false);
   assert.equal(result.details.grounded, false);

@@ -5,6 +5,8 @@ import { callApiStream, getConfig } from "./api.ts";
 import { formatWebSearchResult } from "./format.ts";
 import { getWebSearchModel, missingWebSearchConfigResult, errorResult } from "./utils.ts";
 
+export const ANTHROPIC_SEARCH_INSTRUCTION = "Use the web_search tool to look this up before answering, even if you think you already know the answer. Base your answer on the search results and cite them.";
+
 export const WebSearchSchema = Type.Object({
     query: Type.String({ description: "The search query or question to answer" }),
     urls: Type.Optional(Type.Array(Type.String(), { 
@@ -44,9 +46,15 @@ export async function webSearch(
         // Build prompt: include URLs if provided. Ollama receives the URL list as
         // a separate argument (its search is a REST endpoint, not a model tool),
         // so the prompt stays a clean query.
-        const prompt = hasUrls && config.kind !== "ollama"
+        const basePrompt = hasUrls && config.kind !== "ollama"
             ? `${params.query}\n\nAlso analyze these URLs:\n${params.urls!.join("\n")}`
             : params.query;
+        // Claude Opus/Sonnet 5.5, Fable 5.1 and Mythos 5.1 reject forced
+        // tool_choice, so Anthropic's guidance is to say in the prompt when the
+        // tool applies. Without this they often answer from memory.
+        const prompt = config.kind === "anthropic"
+            ? `${ANTHROPIC_SEARCH_INSTRUCTION}\n\n${basePrompt}`
+            : basePrompt;
 
         // Enable provider-native search tools. Google needs explicit Gemini tool names;
         // OpenAI/Anthropic are handled inside callApiStream based on the current model.

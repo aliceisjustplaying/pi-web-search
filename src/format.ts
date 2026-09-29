@@ -111,6 +111,12 @@ function appendAdditionalResultsSection(
     return result;
 }
 
+export const NO_SEARCH_NOTE = "Note: no web search was performed; this answer is from the search model's own knowledge, not live results.";
+
+export function answeredWithoutSearch(nativeSearchUsed: boolean | undefined, groundingCount: number): boolean {
+    return nativeSearchUsed === false && groundingCount === 0;
+}
+
 function buildResultDetails(
     result: StreamResult,
     sources: Source[],
@@ -144,6 +150,12 @@ export function formatWebSearchResult(result: StreamResult, options: { modelId: 
     summary = appendUrlStatusSection(summary, retrieved, failed);
     summary = appendSourcesSection(summary, sources);
     summary = appendAdditionalResultsSection(summary, additionalResults);
+
+    // Some models (e.g. Claude Opus/Sonnet 5.5) reject forced tool_choice, so
+    // they can answer without searching. Tell the calling model when that happens.
+    if (answeredWithoutSearch(result.nativeSearchUsed, sources.length + (result.searchResults?.length || 0))) {
+        summary += `\n\n${NO_SEARCH_NOTE}`;
+    }
 
     return formatResult(summary, buildResultDetails(
         result,

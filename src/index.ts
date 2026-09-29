@@ -4,6 +4,7 @@ import { Text } from "@earendil-works/pi-tui";
 import { getProviderKind } from "./api.ts";
 import { webSearch, WebSearchSchema } from "./web_search.ts";
 import { urlContext, UrlContextSchema } from "./url_context.ts";
+import { answeredWithoutSearch } from "./format.ts";
 
 const WEB_SEARCH_TOOL = "web_search";
 const URL_CONTEXT_TOOL = "url_context";
@@ -94,7 +95,7 @@ export default function (pi: ExtensionAPI) {
             // The model may answer without calling the native search tool; say so,
             // otherwise a collapsed result looks identical to a real search.
             let status = "";
-            if (details?.nativeSearchUsed === false) {
+            if (answeredWithoutSearch(details?.nativeSearchUsed, (details?.sources?.length ?? 0) + (details?.searchResults?.length ?? 0))) {
                 status = theme.fg("warning", "⚠ No web search performed — answered from model knowledge");
             } else if (details?.nativeSearchUsed === true) {
                 const queries = details.searchQueries?.length ?? 0;
