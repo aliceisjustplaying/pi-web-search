@@ -1,6 +1,6 @@
 # pi-web-search
 
-Provider-native web search for [pi](https://pi.dev) with Gemini + URL Context, xAI Grok, OpenAI Responses variants, Anthropic, Ollama Cloud, and OpenCode Zen/Go.
+Provider-native web search for [pi](https://pi.dev) with Gemini + URL Context, xAI Grok, OpenAI Responses variants, Anthropic, DeepSeek, Ollama Cloud, and OpenCode Zen/Go.
 
 ## Tools
 
@@ -17,6 +17,7 @@ Search the web using your currently selected model. Automatically picks the righ
 | OpenAI Codex | Codex Responses API web search (`openai-codex-responses`) |
 | GitHub Copilot | OpenAI Responses API web search via Copilot credentials |
 | Anthropic | Messages API web search |
+| DeepSeek | Anthropic-compatible Messages API `web_search_20260209` |
 | Ollama Cloud | Ollama web search API (`/api/web_search`, standalone REST) |
 | OpenCode Zen / Go | Responses API web search (models that use the `openai-responses` API) |
 
@@ -60,6 +61,34 @@ For OpenAI Responses models (including Azure, Codex, and Copilot), `web_search` 
 When thinking is off or unavailable, or the search model is non-reasoning, the request omits `reasoning` and leaves the choice to the provider. Off does not force reasoning off: some models reject `reasoning.effort: "none"`. Google, Anthropic, xAI, and Ollama behavior is unchanged.
 
 `url_context` is automatically removed from active tools when using a model that supports neither Gemini URL Context nor Ollama web fetch.
+
+### DeepSeek
+
+Select a model from pi's `deepseek` provider and authenticate with `/login` or
+`DEEPSEEK_API_KEY`. Search automatically uses DeepSeek's Anthropic-compatible
+endpoint (`https://api.deepseek.com/anthropic/v1/messages`) with the same model
+and credentials. A configured proxy base URL is preserved and routed through
+its `/anthropic/v1/messages` endpoint; the proxy must support that route.
+
+To use DeepSeek search with another conversation model, set `web-search.json`:
+
+```json
+{
+  "provider": "deepseek",
+  "model": "deepseek-v4-flash"
+}
+```
+
+The selected model must be registered in pi and support DeepSeek's server-side
+search. Unlike the standalone `pi-deepseek-search` extension, this integration
+uses the model selected by this project's configuration; it does not read
+`DEEPSEEK_SEARCH_MODEL` or silently switch models. Do not load both extensions,
+since they both register `web_search`.
+
+DeepSeek requests support cancellation through pi. Additional `urls` are included in
+the prompt; Gemini's verified URL Context retrieval remains Gemini-only.
+
+This integration was informed by [pi-deepseek-search](https://github.com/bxff/pi-deepseek-search).
 
 ## Test
 
