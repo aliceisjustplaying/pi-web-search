@@ -149,7 +149,7 @@ export async function callOpenAIStream(
             ? [{ role: "user", content: [{ type: "input_text", text: prompt }] }]
             : isGrok
                 ? [{ role: "user", content: prompt }]
-                : prompt,
+                : [{ role: "user", content: [{ type: "input_text", text: prompt }] }],
         tools: [{ type: "web_search" }],
         ...(isCodex || isGrok
             ? { include: ["web_search_call.action.sources"] }

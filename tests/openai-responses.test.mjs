@@ -30,6 +30,53 @@ for (const [provider, api, baseUrl, apiKey] of [
   });
 }
 
+for (const [label, provider, api, baseUrl, apiKey] of [
+  ['OpenAI OAuth', 'openai', 'openai-responses', 'https://api.openai.com/v1', 'chatgpt-access-token'],
+  ['OpenAI API key', 'openai', 'openai-responses', 'https://api.openai.com/v1', 'sk-proj-test'],
+  ['Azure OpenAI', 'azure-openai', 'azure-openai-responses', 'https://example-resource.cognitiveservices.azure.com/openai/v1', 'entra-token'],
+  ['GitHub Copilot', 'github-copilot', 'openai-responses', 'https://api.individual.githubcopilot.com', 'copilot-token'],
+]) {
+  test(`${label} Responses web search sends message-array input without Codex routing`, async (t) => {
+    let requestCount = 0;
+    t.mock.method(globalThis, 'fetch', async (url, init) => {
+      requestCount++;
+      assert.equal(url, `${baseUrl}/responses`);
+      assert.equal(init.headers.authorization, `Bearer ${apiKey}`);
+      assert.equal(Object.hasOwn(init.headers, 'chatgpt-account-id'), false);
+      assert.equal(Object.hasOwn(init.headers, 'originator'), false);
+
+      const body = JSON.parse(init.body);
+      assert.deepEqual(body.input, [{
+        role: 'user',
+        content: [{ type: 'input_text', text: 'Search OpenAI docs' }],
+      }]);
+      assert.deepEqual(body.tools, [{ type: 'web_search' }]);
+      assert.deepEqual(body.include, ['web_search_call.action.sources', 'web_search_call.results']);
+      assert.equal(body.stream, true);
+      assert.equal(body.store, false);
+      assert.equal(Object.hasOwn(body, 'instructions'), false);
+      assert.equal(Object.hasOwn(body, 'tool_choice'), false);
+      assert.equal(Object.hasOwn(body, 'parallel_tool_calls'), false);
+      return makeResponse([
+        { data: { type: 'response.output_text.delta', delta: 'OpenAI search answer' } },
+        { data: { type: 'response.completed', response: { output: [
+          { type: 'web_search_call', id: 'ws_responses', status: 'completed', action: { type: 'search', query: 'OpenAI docs' } },
+        ] } } },
+      ]);
+    });
+
+    const result = await callApiStream(mockCtx(apiKey), {
+      id: 'gpt-test', provider, api, baseUrl, reasoning: false, headers: {},
+    }, { contents: [{ parts: [{ text: 'Search OpenAI docs' }] }] });
+
+    assert.equal(requestCount, 1);
+    assert.equal(result.text, 'OpenAI search answer');
+    assert.equal(result.providerKind, 'openai');
+    assert.equal(result.nativeSearchUsed, true);
+    assert.deepEqual(result.searchQueries, ['OpenAI docs']);
+  });
+}
+
 test('GitHub Copilot Responses uses the credential-specific base URL exposed by pi', async (t) => {
   t.mock.method(globalThis, 'fetch', async (url, init) => {
     assert.equal(url, 'https://api.business.githubcopilot.com/responses');
@@ -330,7 +377,10 @@ test('Grok on an OpenAI-compatible gateway uses Grok web search schema', async (
   // Wire shape is Grok's, but provider identity stays with the gateway.
   assert.equal(result.providerKind, 'openai');
 
-  assert.equal(bodies[1].input, 'Search xAI docs');
+  assert.deepEqual(bodies[1].input, [{
+    role: 'user',
+    content: [{ type: 'input_text', text: 'Search xAI docs' }],
+  }]);
   assert.deepEqual(bodies[1].include, ['web_search_call.action.sources', 'web_search_call.results']);
   // Control: the same stream through the OpenAI parser gets an index marker,
   // so the Grok assertion above actually distinguishes the two citation paths.
@@ -345,7 +395,7 @@ test('compat.webSearchDialect overrides the default Grok id detection', async (t
   });
 
   const GROK = { input: [{ role: 'user', content: 'q' }], include: ['web_search_call.action.sources'] };
-  const OPENAI = { input: 'q', include: ['web_search_call.action.sources', 'web_search_call.results'] };
+  const OPENAI = { input: [{ role: 'user', content: [{ type: 'input_text', text: 'q' }] }], include: ['web_search_call.action.sources', 'web_search_call.results'] };
   const base = { api: 'openai-responses', baseUrl: 'https://gateway.example.com/v1', reasoning: false, headers: {} };
   for (const [label, model, expected] of [
     ['gateway grok-4.6 opted out', { ...base, provider: 'custom-gateway', id: 'grok-4.6', compat: { webSearchDialect: 'openai' } }, OPENAI],
