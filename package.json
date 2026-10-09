@@ -45,9 +45,9 @@
     "@earendil-works/pi-ai": "^1.1.0",
     "@earendil-works/pi-coding-agent": "^1.1.0",
     "@earendil-works/pi-tui": "^1.1.0",
-    "@types/node": "^25.9.1",
+    "@types/node": "^26.6.4",
     "typebox": "^1.1.38",
-    "typescript": "^6.0.3"
+    "typescript": "^7.0.2"
   },
   "pi": {
     "extensions": [
