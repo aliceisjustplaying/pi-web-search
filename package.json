@@ -1,7 +1,7 @@
 {
   "name": "pi-web-search",
-  "version": "1.6.0",
-  "description": "Provider-native web search for pi: Gemini + URL Context, xAI Grok, OpenAI Responses (Azure/Codex/Copilot), Anthropic, and OpenCode Zen/Go",
+  "version": "1.7.0",
+  "description": "Provider-native web search for pi: Gemini + URL Context, xAI Grok, OpenAI Responses (Azure/Codex/Copilot), Anthropic, DeepSeek, and OpenCode Zen/Go",
   "type": "module",
   "main": "src/index.ts",
   "keywords": [
@@ -15,6 +15,7 @@
     "grok",
     "openai",
     "anthropic",
+    "deepseek",
     "opencode",
     "opencode-zen",
     "url-context",
@@ -41,9 +42,9 @@
     "test:real:url-context": "node tests/real-url-context.mjs"
   },
   "devDependencies": {
-    "@earendil-works/pi-ai": "^0.84.1",
-    "@earendil-works/pi-coding-agent": "^0.84.1",
-    "@earendil-works/pi-tui": "^0.84.1",
+    "@earendil-works/pi-ai": "^1.1.0",
+    "@earendil-works/pi-coding-agent": "^1.1.0",
+    "@earendil-works/pi-tui": "^1.1.0",
     "@types/node": "^25.9.1",
     "typebox": "^1.1.38",
     "typescript": "^6.0.3"
@@ -54,8 +55,8 @@
     ]
   },
   "peerDependencies": {
-    "@earendil-works/pi-ai": ">=0.84.1",
-    "@earendil-works/pi-coding-agent": ">=0.84.1",
+    "@earendil-works/pi-ai": ">=1.1.0",
+    "@earendil-works/pi-coding-agent": ">=1.1.0",
     "@earendil-works/pi-tui": "*",
     "typebox": "*"
   }

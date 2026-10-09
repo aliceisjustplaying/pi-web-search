@@ -84,6 +84,7 @@ function isOllamaModel(model: Model<Api>): boolean {
 }
 
 export function getProviderKind(model: Model<Api>): ProviderKind {
+    if (model.provider === "deepseek") return "deepseek";
     if (model.provider === "antigravity" || model.api === "antigravity") return "google";
     if (GOOGLE_PROVIDERS[model.provider] || GOOGLE_PROVIDERS[model.api]) return "google";
     if (isOllamaModel(model)) return "ollama";
@@ -95,6 +96,29 @@ export function getProviderKind(model: Model<Api>): ProviderKind {
     ) return "openai";
     if (model.api === "anthropic-messages") return "anthropic";
     return "unsupported";
+}
+
+export type SearchDialect = "grok" | "openai";
+
+// Optional models.json override: compat.webSearchDialect. Not part of pi-ai's
+// compat types, so read it through a local cast and ignore unknown values.
+function dialectOverride(model: Model<Api>): SearchDialect | undefined {
+    const value = (model.compat as { webSearchDialect?: unknown } | undefined)?.webSearchDialect;
+    return value === "grok" || value === "openai" ? value : undefined;
+}
+
+// Wire shape only (include, input, citation parsing). Grok is also served through
+// third-party OpenAI-compatible Responses gateways whose provider kind is "openai";
+// those reject web_search_call.results with 400 and return inline citations.
+// Provider identity (auth, labels, reasoning semantics) stays with getProviderKind.
+export function getSearchDialect(model: Model<Api>): SearchDialect {
+    const override = dialectOverride(model);
+    if (override) return override;
+    if (getProviderKind(model) === "xai") return "grok";
+    // Default only, matching official ids (grok-4.6, grok-4-fast, grok-code-fast-1).
+    // Prefixed or renamed ids opt in with compat.webSearchDialect.
+    if (/^grok([.-]|$)/i.test(model.id)) return "grok";
+    return "openai";
 }
 
 export function getConfig(model: Model<Api>): ProviderConfig {

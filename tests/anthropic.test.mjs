@@ -7,7 +7,7 @@ import { makeResponse } from './fixtures.mjs';
 test('Anthropic stream exposes server web search, result URLs, and citation details', async (t) => {
   t.mock.method(globalThis, 'fetch', async (_url, init) => {
     const body = JSON.parse(init.body);
-    assert.deepEqual(body.tools[0], { type: 'web_search_20250305', name: 'web_search', max_uses: 10 });
+    assert.deepEqual(body.tools[0], { type: 'web_search_20260209', name: 'web_search', max_uses: 10, allowed_callers: ['direct'] });
     assert.equal(body.tool_choice, undefined);
     return makeResponse([
       { data: { type: 'content_block_start', index: 0, content_block: { type: 'server_tool_use', id: 'srv_1', name: 'web_search', input: { query: 'OpenAI docs' } } } },
@@ -154,7 +154,7 @@ test('Anthropic OAuth search uses the effective provider so wrappers can transfo
   t.mock.method(globalThis, 'fetch', async (_url, init) => {
     const body = JSON.parse(init.body);
     assert.equal(body.system[0].text, 'transformed-by-effective-provider');
-    assert.deepEqual(body.tools[0], { type: 'web_search_20250305', name: 'web_search', max_uses: 10 });
+    assert.deepEqual(body.tools[0], { type: 'web_search_20260209', name: 'web_search', max_uses: 10, allowed_callers: ['direct'] });
     return makeResponse([
       { data: { type: 'content_block_start', index: 0, content_block: { type: 'server_tool_use', id: 'srv_oauth', name: 'web_search', input: { query: 'Anthropic news' } } } },
       { data: { type: 'content_block_start', index: 1, content_block: { type: 'web_search_tool_result', tool_use_id: 'srv_oauth', content: [{ type: 'web_search_result', title: 'Anthropic news', url: 'https://www.anthropic.com/news', encrypted_content: 'x' }] } } },
