@@ -4,7 +4,9 @@ import { getProviderKind } from "./providers/config.ts";
 import { callGoogleStream, extractPromptFromGeminiBody } from "./providers/google.ts";
 import { callOpenAIStream } from "./providers/openai.ts";
 import { callAnthropicStream } from "./providers/anthropic.ts";
+import { callDeepSeekSearch } from "./providers/deepseek.ts";
 import { callOllamaSearch } from "./providers/ollama.ts";
+import { callVirtualSearch } from "./providers/virtual.ts";
 import type { StreamResult } from "./providers/types.ts";
 
 export { getProviderKind, getConfig } from "./providers/config.ts";
@@ -30,16 +32,24 @@ export async function callApiStream(
         throw new Error("No prompt text found in request body");
     }
 
-    // Ollama search is a standalone REST call, not a model tool — the prompt
-    // carries the embedded URL list only for other providers, so strip it here.
+    if (kind === "virtual") {
+        return callVirtualSearch(ctx, model, prompt, onUpdate, signal, thinkingLevel, urls);
+    }
+
+    // Ollama and DeepSeek are reached through standalone REST search endpoints
+    // rather than a model tool — the prompt carries the embedded URL list only
+    // for the providers below, so strip it here.
     if (kind === "ollama") {
         return callOllamaSearch(ctx, model, prompt, urls, onUpdate, signal);
+    }
+    if (kind === "deepseek") {
+        return callDeepSeekSearch(ctx, model, prompt, urls, onUpdate, signal);
     }
 
     if (kind === "openai" || kind === "xai") {
         return callOpenAIStream(ctx, model, prompt, onUpdate, signal, thinkingLevel);
     }
-    if (kind === "anthropic" || kind === "deepseek") {
+    if (kind === "anthropic") {
         return callAnthropicStream(ctx, model, prompt, onUpdate, signal);
     }
 

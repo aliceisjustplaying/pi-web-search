@@ -1,9 +1,8 @@
 import type { ExtensionContext, AgentToolUpdateCallback } from "@earendil-works/pi-coding-agent";
-import type { ModelThinkingLevel } from "@earendil-works/pi-ai";
 import { Type, type Static } from "typebox";
 import { callApiStream, getConfig } from "./api.ts";
 import { formatWebSearchResult } from "./format.ts";
-import { getWebSearchModel, missingWebSearchConfigResult, errorResult } from "./utils.ts";
+import { resolveWebSearchModel, webSearchModelError, errorResult } from "./utils.ts";
 
 export const ANTHROPIC_SEARCH_INSTRUCTION = "Use the web_search tool to look this up before answering, even if you think you already know the answer. Base your answer on the search results and cite them.";
 
@@ -21,11 +20,11 @@ export async function webSearch(
     params: WebSearchInput, 
     signal: AbortSignal,
     onUpdate: AgentToolUpdateCallback | undefined, 
-    ctx: ExtensionContext,
-    thinkingLevel?: ModelThinkingLevel
+    ctx: ExtensionContext
 ) {
-    const model = await getWebSearchModel(ctx);
-    if (!model) return missingWebSearchConfigResult(ctx);
+    const resolved = await resolveWebSearchModel(ctx);
+    if (resolved.status !== "ok") return webSearchModelError(ctx, resolved);
+    const model = resolved.model;
 
     const hasUrls = params.urls && params.urls.length > 0;
     const urlCount = hasUrls ? params.urls!.length : 0;
@@ -43,10 +42,10 @@ export async function webSearch(
     try {
         const config = getConfig(model);
 
-        // Build prompt: include URLs if provided. Ollama receives the URL list as
-        // a separate argument (its search is a REST endpoint, not a model tool),
-        // so the prompt stays a clean query.
-        const basePrompt = hasUrls && config.kind !== "ollama"
+        // Build prompt: include URLs if provided. Ollama and DeepSeek receive
+        // the URL list as a separate argument (their search is a REST endpoint,
+        // not a model tool), so the prompt stays a clean query.
+        const basePrompt = hasUrls && config.kind !== "ollama" && config.kind !== "deepseek"
             ? `${params.query}\n\nAlso analyze these URLs:\n${params.urls!.join("\n")}`
             : params.query;
         // Claude Opus/Sonnet 5.5, Fable 5.1 and Mythos 5.1 reject forced
@@ -67,7 +66,7 @@ export async function webSearch(
         const result = await callApiStream(ctx, model, {
             contents: [{ role: "user", parts: [{ text: prompt }] }],
             ...(tools ? { tools } : {})
-        }, onUpdate, signal, thinkingLevel, params.urls);
+        }, onUpdate, signal, resolved.thinkingLevel, params.urls);
 
         return formatWebSearchResult(result, { modelId: model.id });
     } catch (e: any) {

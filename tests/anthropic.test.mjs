@@ -98,15 +98,15 @@ test('Anthropic stream sends the Claude Code system prompt for OAuth credentials
   t.mock.method(globalThis, 'fetch', async (_url, init) => {
     const body = JSON.parse(init.body);
     assert.equal(init.headers.Authorization, 'Bearer sk-ant-oat01-test');
-    // Anthropic rejects OAuth requests from a claude-cli older than 2.1.251
-    // ("Claude Code 2.1.75 does not support this model"), so the default UA
+    // Anthropic rejects OAuth requests from a claude-cli older than 2.1.280
+    // ("Claude Code 2.1.251 does not support this model"), so the default UA
     // has to keep up with that floor.
     const [, cliVersion] = /^claude-cli\/(\d+\.\d+\.\d+)$/.exec(init.headers['user-agent']) ?? [];
     assert.ok(cliVersion, `expected a claude-cli user-agent, got ${init.headers['user-agent']}`);
     const [major, minor, patch] = cliVersion.split('.').map(Number);
-    const floor = [2, 1, 251];
+    const floor = [2, 1, 280];
     const meetsFloor = major !== floor[0] ? major > floor[0] : minor !== floor[1] ? minor > floor[1] : patch >= floor[2];
-    assert.ok(meetsFloor, `claude-cli/${cliVersion} is below the 2.1.251 floor`);
+    assert.ok(meetsFloor, `claude-cli/${cliVersion} is below the 2.1.280 floor`);
     assert.deepEqual(body.system, [
       { type: 'text', text: "You are Claude Code, Anthropic's official CLI for Claude." },
     ]);
@@ -172,6 +172,8 @@ test('Anthropic OAuth search uses the effective provider so wrappers can transfo
       // pi-ai treats an explicit anthropic-beta header as the complete beta list,
       // which would drop betas the provider needs (e.g. mid-conversation effort).
       assert.ok(!Object.keys(options.headers).some((name) => name.toLowerCase() === 'anthropic-beta'));
+      // The registered provider (e.g. pi-black) owns identity headers on the routed path.
+      assert.ok(!Object.keys(options.headers).some((name) => ['user-agent', 'x-app'].includes(name.toLowerCase())));
       assert.equal(context.messages[0].content, 'Search Anthropic news');
       const result = (async () => {
         const searchPayload = await options.onPayload({
@@ -206,4 +208,25 @@ test('Anthropic OAuth search uses the effective provider so wrappers can transfo
   assert.equal(result.nativeSearchUsed, true);
   assert.deepEqual(result.searchQueries, ['Anthropic news']);
   assert.equal(result.sources[0].url, 'https://www.anthropic.com/news');
+});
+
+test('Anthropic stream honours a registry-provided base URL override', async (t) => {
+  let requestedUrl;
+  t.mock.method(globalThis, 'fetch', async (url) => {
+    requestedUrl = url;
+    return makeResponse([
+      { data: { type: 'content_block_delta', index: 0, delta: { type: 'text_delta', text: 'ok' } } },
+    ]);
+  });
+
+  await callApiStream(mockCtx('sk-ant-api03-test', undefined, undefined, 'https://proxy.test/anthropic'), {
+    id: 'claude-test',
+    provider: 'anthropic',
+    api: 'anthropic-messages',
+    baseUrl: 'https://example.test/anthropic',
+    maxTokens: 4096,
+    headers: {},
+  }, { contents: [{ parts: [{ text: 'Search' }] }] });
+
+  assert.equal(requestedUrl, 'https://proxy.test/anthropic/v1/messages');
 });

@@ -42,11 +42,11 @@
     "test:real:url-context": "node tests/real-url-context.mjs"
   },
   "devDependencies": {
-    "@earendil-works/pi-ai": "^1.1.0",
-    "@earendil-works/pi-coding-agent": "^1.1.0",
-    "@earendil-works/pi-tui": "^1.1.0",
-    "@types/node": "^26.6.4",
-    "typebox": "^1.1.38",
+    "@earendil-works/pi-ai": "^1.5.0",
+    "@earendil-works/pi-coding-agent": "^1.5.0",
+    "@earendil-works/pi-tui": "^1.5.0",
+    "@types/node": "^26.6.6",
+    "typebox": "^1.4.6",
     "typescript": "^7.0.2"
   },
   "pi": {

@@ -1,6 +1,7 @@
 import type { ExtensionContext, AgentToolUpdateCallback } from "@earendil-works/pi-coding-agent";
 import { Type, type Static } from "typebox";
 import { callApiStream, getConfig } from "./api.ts";
+import { callDeepSeekUrlContext } from "./providers/deepseek.ts";
 import { callOllamaUrlContext } from "./providers/ollama.ts";
 import { formatResult, formatUrlContextResult } from "./format.ts";
 import { getModel, missingConfigResult, errorResult } from "./utils.ts";
@@ -34,6 +35,10 @@ export async function urlContext(
         const config = getConfig(model);
         if (config.kind === "ollama") {
             const result = await callOllamaUrlContext(ctx, model, params.query, params.urls, signal);
+            return formatUrlContextResult(result, { modelId: model.id });
+        }
+        if (config.kind === "deepseek") {
+            const result = await callDeepSeekUrlContext(ctx, model, params.query, params.urls, signal);
             return formatUrlContextResult(result, { modelId: model.id });
         }
         if (config.kind !== "google") {
